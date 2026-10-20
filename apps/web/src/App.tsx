@@ -1,7 +1,19 @@
 
+import { useState } from 'react'
+
+import { AvailableSlots } from './features/slots/AvailableSlots'
+import { CreateSlotForm } from './features/slots/CreateSlotForm'
+
 function App() {
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  function handleSlotCreated() {
+    setRefreshKey((current) => current + 1)
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
+      {/* Header */}
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
           <span className="text-2xl font-bold tracking-tight text-indigo-600">
@@ -15,7 +27,8 @@ function App() {
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-16">
-        <div className="max-w-2xl">
+        {/* Hero Section */}
+        <section className="max-w-2xl">
           <p className="mb-4 text-sm font-semibold uppercase tracking-widest text-indigo-600">
             Simple. Smart. Seamless.
           </p>
@@ -28,8 +41,9 @@ function App() {
             Share your availability, let others book a time,
             and manage meetings in one beautiful place.
           </p>
-        </div>
+        </section>
 
+        {/* Feature Cards */}
         <div className="mt-12 grid gap-6 md:grid-cols-2">
           <section className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
             <span className="text-sm font-semibold text-indigo-600">
@@ -62,10 +76,21 @@ function App() {
           </section>
         </div>
 
-        <p className="mt-10 text-sm text-slate-400">
-          Interface preview — booking functionality coming next.
-        </p>
+        {/* Host Availability Form */}
+        <CreateSlotForm onCreated={handleSlotCreated} />
+
+        {/* Available Time Slots */}
+        <AvailableSlots key={refreshKey} />
       </main>
+
+      {/* Footer */}
+      <footer className="mt-16 border-t border-slate-200 bg-white">
+        <div className="mx-auto max-w-6xl px-6 py-6">
+          <p className="text-center text-sm text-slate-500">
+            MeetFlow — Smart Scheduling
+          </p>
+        </div>
+      </footer>
     </div>
   )
 }

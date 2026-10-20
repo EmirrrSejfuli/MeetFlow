@@ -22,3 +22,7 @@ Thumbs.db
 # Editor configuration
 .vscode/*
 !.vscode/extensions.json
+
+
+# TypeScript incremental build files
+*.tsbuildinfo
