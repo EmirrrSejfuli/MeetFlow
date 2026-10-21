@@ -3,9 +3,11 @@ import { useState, type FormEvent } from 'react'
 
 import { createBooking } from './bookings.api'
 
+type BookingResult = Awaited<ReturnType<typeof createBooking>>
+
 interface BookingFormProps {
   slotId: string
-  onBooked: () => void
+  onBooked: (booking: BookingResult) => void
   onCancel: () => void
 }
 
@@ -37,13 +39,14 @@ export function BookingForm({
     setSubmitting(true)
 
     try {
-      await createBooking({
+      const booking = await createBooking({
         slotId,
         guestName: name,
         guestEmail: email,
       })
 
-      onBooked()
+      // Pass the complete booking response to the parent.
+      onBooked(booking)
     } catch (err: unknown) {
       setError(
         err instanceof Error

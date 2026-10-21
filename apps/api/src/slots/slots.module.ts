@@ -10,6 +10,5 @@ import { SlotsService } from './slots.service';
   imports: [TypeOrmModule.forFeature([TimeSlot])],
   controllers: [SlotsController],
   providers: [SlotsService],
-  exports: [SlotsService],
 })
 export class SlotsModule {}

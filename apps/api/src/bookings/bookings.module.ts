@@ -2,6 +2,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { GeminiModule } from '../gemini/gemini.module';
 import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
 import { TimeSlot } from '../slots/entities/time-slot.entity';
 
@@ -13,6 +14,7 @@ import { BookingsService } from './bookings.service';
   imports: [
     TypeOrmModule.forFeature([Booking, TimeSlot]),
     GoogleCalendarModule,
+    GeminiModule,
   ],
   controllers: [BookingsController],
   providers: [BookingsService],

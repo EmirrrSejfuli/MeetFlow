@@ -3,19 +3,30 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 
+import { GeminiService } from '../gemini/gemini.service';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 import { TimeSlot } from '../slots/entities/time-slot.entity';
 
 import { Booking } from './entities/booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
 
+export interface BookingConfirmation {
+  confirmationMessage: string;
+  confirmationSource: 'gemini' | 'fallback';
+}
+
+export type BookingWithConfirmation = Booking & BookingConfirmation;
+
 @Injectable()
 export class BookingsService {
+  private readonly logger = new Logger(BookingsService.name);
+
   constructor(
     @InjectRepository(Booking)
     private readonly bookingsRepository: Repository<Booking>,
@@ -24,16 +35,19 @@ export class BookingsService {
     private readonly slotsRepository: Repository<TimeSlot>,
 
     private readonly googleCalendarService: GoogleCalendarService,
+
+    private readonly geminiService: GeminiService,
   ) {}
 
-  async create(dto: CreateBookingDto): Promise<Booking> {
+  // Save the booking without waiting for Gemini AI.
+  async create(
+    dto: CreateBookingDto,
+  ): Promise<BookingWithConfirmation> {
     const guestName = dto.guestName.trim();
     const guestEmail = dto.guestEmail.trim().toLowerCase();
 
     if (!guestName) {
-      throw new BadRequestException(
-        'Guest name is required',
-      );
+      throw new BadRequestException('Guest name is required');
     }
 
     const slot = await this.slotsRepository.findOneBy({
@@ -41,9 +55,7 @@ export class BookingsService {
     });
 
     if (!slot) {
-      throw new NotFoundException(
-        'Time slot not found',
-      );
+      throw new NotFoundException('Time slot not found');
     }
 
     if (slot.startsAt.getTime() <= Date.now()) {
@@ -52,7 +64,6 @@ export class BookingsService {
       );
     }
 
-    // Verify availability in Google Calendar.
     const isBusy = await this.googleCalendarService.isHostBusy(
       slot.startsAt,
       slot.durationMinutes,
@@ -70,8 +81,10 @@ export class BookingsService {
       guestEmail,
     });
 
+    let savedBooking: Booking;
+
     try {
-      return await this.bookingsRepository.save(booking);
+      savedBooking = await this.bookingsRepository.save(booking);
     } catch (error: unknown) {
       if (error instanceof QueryFailedError) {
         const databaseError = error.driverError as {
@@ -91,5 +104,94 @@ export class BookingsService {
 
       throw error;
     }
+
+    // Return immediately with a standard confirmation.
+    return {
+      ...savedBooking,
+      confirmationMessage: this.buildFallbackMessage(
+        guestName,
+        slot,
+      ),
+      confirmationSource: 'fallback',
+    };
+  }
+
+  // Called separately after the booking has succeeded.
+  async generateConfirmation(
+    bookingId: string,
+  ): Promise<BookingConfirmation> {
+    const booking = await this.bookingsRepository.findOneBy({
+      id: bookingId,
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    const slot = await this.slotsRepository.findOneBy({
+      id: booking.slotId,
+    });
+
+    if (!slot) {
+      throw new NotFoundException('Time slot not found');
+    }
+
+    const fallbackMessage = this.buildFallbackMessage(
+      booking.guestName,
+      slot,
+    );
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const confirmationMessage = await Promise.race([
+        this.geminiService.generateBookingConfirmation({
+          guestName: booking.guestName,
+          startsAt: slot.startsAt,
+          durationMinutes: slot.durationMinutes,
+        }),
+
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error('Gemini confirmation timed out'));
+          }, 35000);
+        }),
+      ]);
+
+      return {
+        confirmationMessage,
+        confirmationSource: 'gemini',
+      };
+    } catch {
+      this.logger.warn(
+        'Gemini confirmation unavailable. Using fallback message.',
+      );
+
+      return {
+        confirmationMessage: fallbackMessage,
+        confirmationSource: 'fallback',
+      };
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  private buildFallbackMessage(
+    guestName: string,
+    slot: TimeSlot,
+  ): string {
+    const localDateTime = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Skopje',
+      dateStyle: 'full',
+      timeStyle: 'short',
+    }).format(slot.startsAt);
+
+    return (
+      `Hello ${guestName}, your MeetFlow booking is confirmed ` +
+      `for ${localDateTime} (Europe/Skopje). ` +
+      `The meeting duration is ${slot.durationMinutes} minutes.`
+    );
   }
 }

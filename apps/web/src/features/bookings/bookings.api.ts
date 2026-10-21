@@ -5,6 +5,13 @@ export interface Booking {
   guestName: string
   guestEmail: string
   createdAt: string
+  confirmationMessage: string
+  confirmationSource: 'gemini' | 'fallback'
+}
+
+export interface BookingConfirmation {
+  confirmationMessage: string
+  confirmationSource: 'gemini' | 'fallback'
 }
 
 export interface CreateBookingInput {
@@ -66,4 +73,24 @@ export async function createBooking(
   }
 
   return (await response.json()) as Booking
+}
+
+// Request an AI confirmation after the booking is saved.
+export async function generateBookingConfirmation(
+  bookingId: string,
+): Promise<BookingConfirmation> {
+  const response = await fetch(
+    `${API_BASE_URL}/bookings/${encodeURIComponent(bookingId)}/confirmation`,
+    {
+      method: 'POST',
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error(
+      'The AI confirmation is temporarily unavailable.',
+    )
+  }
+
+  return (await response.json()) as BookingConfirmation
 }

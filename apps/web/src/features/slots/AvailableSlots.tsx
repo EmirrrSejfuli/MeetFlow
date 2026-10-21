@@ -3,6 +3,11 @@ import { useEffect, useState } from 'react'
 
 import { BookingForm } from '../bookings/BookingForm'
 import {
+  generateBookingConfirmation,
+  type Booking,
+} from '../bookings/bookings.api'
+
+import {
   getAvailableSlots,
   type TimeSlot,
 } from './slots.api'
@@ -29,7 +34,12 @@ export function AvailableSlots() {
     string | null
   >(null)
 
-  const [bookingSuccess, setBookingSuccess] = useState(false)
+  const [confirmedBooking, setConfirmedBooking] =
+    useState<Booking | null>(null)
+
+  const [generatingForId, setGeneratingForId] =
+    useState<string | null>(null)
+
   const [refreshCount, setRefreshCount] = useState(0)
 
   useEffect(() => {
@@ -63,15 +73,47 @@ export function AvailableSlots() {
     return () => controller.abort()
   }, [refreshCount])
 
-  function handleBookingSuccess(bookedSlotId: string) {
+  function handleBookingSuccess(booking: Booking) {
+    // Remove the booked slot from the available list.
     setSlots((current) =>
-      current.filter((slot) => slot.id !== bookedSlotId),
+      current.filter(
+        (slot) => slot.id !== booking.slotId,
+      ),
     )
 
     setSelectedSlotId(null)
-    setBookingSuccess(true)
 
-    // Refresh to synchronize with the server.
+    // Show the standard confirmation immediately.
+    setConfirmedBooking(booking)
+
+    // Begin AI personalization separately.
+    setGeneratingForId(booking.id)
+
+    void generateBookingConfirmation(booking.id)
+      .then((confirmation) => {
+        // Update only the booking currently displayed.
+        setConfirmedBooking((current) => {
+          if (!current || current.id !== booking.id) {
+            return current
+          }
+
+          return {
+            ...current,
+            ...confirmation,
+          }
+        })
+      })
+      .catch(() => {
+        // Keep the standard confirmation if AI fails.
+        // The booking has already been saved.
+      })
+      .finally(() => {
+        setGeneratingForId((current) =>
+          current === booking.id ? null : current,
+        )
+      })
+
+    // Refresh available slots from the server.
     setRefreshCount((current) => current + 1)
   }
 
@@ -80,8 +122,12 @@ export function AvailableSlots() {
       current === slotId ? null : slotId,
     )
 
-    setBookingSuccess(false)
+    setConfirmedBooking(null)
   }
+
+  const isGeneratingConfirmation =
+    confirmedBooking !== null &&
+    generatingForId === confirmedBooking.id
 
   return (
     <section
@@ -102,19 +148,55 @@ export function AvailableSlots() {
         </p>
       </div>
 
-      {bookingSuccess && (
+      {confirmedBooking && (
         <div
           role="status"
-          className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-5"
+          aria-live="polite"
+          className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-6 shadow-sm"
         >
-          <h3 className="font-semibold text-emerald-800">
-            Booking Confirmed!
-          </h3>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-xl font-bold text-emerald-700">
+              ✓
+            </div>
 
-          <p className="mt-2 text-sm text-emerald-700">
-            Your meeting has been successfully booked.
-            Thank you for choosing MeetFlow!
-          </p>
+            <div>
+              <h3 className="text-lg font-bold text-emerald-900">
+                Booking Confirmed!
+              </h3>
+
+              <p className="text-xs text-emerald-700">
+                Your reservation was saved successfully.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 rounded-xl border border-emerald-100 bg-white p-5">
+            <p className="whitespace-pre-line text-sm leading-7 text-slate-700">
+              {confirmedBooking.confirmationMessage}
+            </p>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {isGeneratingConfirmation ? (
+              <span className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700">
+                <span
+                  className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600"
+                  aria-hidden="true"
+                />
+                Preparing your personalized AI message...
+              </span>
+            ) : confirmedBooking.confirmationSource ===
+              'gemini' ? (
+              <span className="inline-flex items-center gap-2 rounded-full bg-indigo-100 px-3 py-1.5 text-xs font-semibold text-indigo-700">
+                <span aria-hidden="true">✦</span>
+                Personalized with Gemini AI
+              </span>
+            ) : (
+              <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600">
+                Standard booking confirmation
+              </span>
+            )}
+          </div>
         </div>
       )}
 
@@ -155,7 +237,8 @@ export function AvailableSlots() {
                 slot.durationMinutes * 60_000,
             )
 
-            const isSelected = selectedSlotId === slot.id
+            const isSelected =
+              selectedSlotId === slot.id
 
             return (
               <article
@@ -189,7 +272,9 @@ export function AvailableSlots() {
                 {!isSelected && (
                   <button
                     type="button"
-                    onClick={() => handleSelectSlot(slot.id)}
+                    onClick={() =>
+                      handleSelectSlot(slot.id)
+                    }
                     aria-label={`Book meeting on ${dateFormatter.format(start)} at ${timeFormatter.format(start)}`}
                     className="mt-6 w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
                   >
@@ -200,9 +285,7 @@ export function AvailableSlots() {
                 {isSelected && (
                   <BookingForm
                     slotId={slot.id}
-                    onBooked={() =>
-                      handleBookingSuccess(slot.id)
-                    }
+                    onBooked={handleBookingSuccess}
                     onCancel={() =>
                       setSelectedSlotId(null)
                     }
