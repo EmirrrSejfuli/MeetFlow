@@ -6,9 +6,11 @@ import {
 } from '@nestjs/common';
 import { QueryFailedError, Repository } from 'typeorm';
 
+import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
+import { TimeSlot } from '../slots/entities/time-slot.entity';
+
 import { BookingsService } from './bookings.service';
 import { Booking } from './entities/booking.entity';
-import { TimeSlot } from '../slots/entities/time-slot.entity';
 
 describe('BookingsService', () => {
   const bookingsRepository = {
@@ -18,6 +20,10 @@ describe('BookingsService', () => {
 
   const slotsRepository = {
     findOneBy: jest.fn(),
+  };
+
+  const googleCalendarService = {
+    isHostBusy: jest.fn(),
   };
 
   let service: BookingsService;
@@ -30,7 +36,7 @@ describe('BookingsService', () => {
     guestEmail: '  TEST@EXAMPLE.COM  ',
   });
 
-  const createFutureSlot = () =>
+  const createFutureSlot = (): TimeSlot =>
     ({
       id: slotId,
       startsAt: new Date(Date.now() + 60 * 60 * 1000),
@@ -40,9 +46,12 @@ describe('BookingsService', () => {
   beforeEach(() => {
     jest.resetAllMocks();
 
+    googleCalendarService.isHostBusy.mockResolvedValue(false);
+
     service = new BookingsService(
       bookingsRepository as unknown as Repository<Booking>,
       slotsRepository as unknown as Repository<TimeSlot>,
+      googleCalendarService as unknown as GoogleCalendarService,
     );
   });
 
@@ -69,6 +78,11 @@ describe('BookingsService', () => {
       id: slotId,
     });
 
+    expect(googleCalendarService.isHostBusy).toHaveBeenCalledWith(
+      slot.startsAt,
+      slot.durationMinutes,
+    );
+
     expect(bookingsRepository.create).toHaveBeenCalledWith({
       slotId,
       guestName: 'Test Guest',
@@ -91,6 +105,7 @@ describe('BookingsService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(slotsRepository.findOneBy).not.toHaveBeenCalled();
+    expect(googleCalendarService.isHostBusy).not.toHaveBeenCalled();
     expect(bookingsRepository.save).not.toHaveBeenCalled();
   });
 
@@ -103,19 +118,18 @@ describe('BookingsService', () => {
       service.create(dto),
     ).rejects.toBeInstanceOf(NotFoundException);
 
+    expect(googleCalendarService.isHostBusy).not.toHaveBeenCalled();
     expect(bookingsRepository.save).not.toHaveBeenCalled();
   });
 
   it('should reject a booking for a past slot', async () => {
     const dto = createValidDto();
 
+    const pastSlot = createFutureSlot();
 
-const pastSlot = createFutureSlot();
-
-pastSlot.startsAt = new Date(
-  Date.now() - 60 * 60 * 1000,
-);
-
+    pastSlot.startsAt = new Date(
+      Date.now() - 60 * 60 * 1000,
+    );
 
     slotsRepository.findOneBy.mockResolvedValue(pastSlot);
 
@@ -123,6 +137,7 @@ pastSlot.startsAt = new Date(
       service.create(dto),
     ).rejects.toBeInstanceOf(BadRequestException);
 
+    expect(googleCalendarService.isHostBusy).not.toHaveBeenCalled();
     expect(bookingsRepository.save).not.toHaveBeenCalled();
   });
 
@@ -154,6 +169,8 @@ pastSlot.startsAt = new Date(
     await expect(
       service.create(dto),
     ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(googleCalendarService.isHostBusy).toHaveBeenCalled();
   });
 
   it('should not hide unexpected database errors', async () => {
@@ -174,5 +191,47 @@ pastSlot.startsAt = new Date(
     await expect(
       service.create(dto),
     ).rejects.toBe(databaseError);
+  });
+
+  it('should reject booking when Google Calendar is busy', async () => {
+    const dto = createValidDto();
+    const slot = createFutureSlot();
+
+    slotsRepository.findOneBy.mockResolvedValue(slot);
+
+    googleCalendarService.isHostBusy.mockResolvedValue(true);
+
+    await expect(
+      service.create(dto),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(googleCalendarService.isHostBusy).toHaveBeenCalledWith(
+      slot.startsAt,
+      slot.durationMinutes,
+    );
+
+    expect(bookingsRepository.create).not.toHaveBeenCalled();
+    expect(bookingsRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('should reject booking when Google Calendar is unavailable', async () => {
+    const dto = createValidDto();
+    const slot = createFutureSlot();
+
+    slotsRepository.findOneBy.mockResolvedValue(slot);
+
+    const calendarError = new Error(
+      'Google Calendar unavailable',
+    );
+
+    googleCalendarService.isHostBusy.mockRejectedValue(
+      calendarError,
+    );
+
+    await expect(
+      service.create(dto),
+    ).rejects.toBe(calendarError);
+
+    expect(bookingsRepository.save).not.toHaveBeenCalled();
   });
 });

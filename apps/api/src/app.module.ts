@@ -7,7 +7,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SlotsModule } from './slots/slots.module';
 import { BookingsModule } from './bookings/bookings.module';
-
+import { GoogleCalendarModule } from './google-calendar/google-calendar.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -37,8 +37,8 @@ import { BookingsModule } from './bookings/bookings.module';
     }),
 
     SlotsModule,
-
     BookingsModule,
+    GoogleCalendarModule,
   ],
 
   controllers: [AppController],

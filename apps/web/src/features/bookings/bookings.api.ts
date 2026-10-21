@@ -28,6 +28,20 @@ export async function createBooking(
   })
 
   if (response.status === 409) {
+    const body: unknown = await response.json().catch(() => null)
+
+    if (
+      typeof body === 'object' &&
+      body !== null &&
+      'message' in body &&
+      body.message ===
+        'The host is busy in Google Calendar at this time.'
+    ) {
+      throw new Error(
+        'The host is unavailable at this time due to a Google Calendar conflict. Please choose another slot.',
+      )
+    }
+
     throw new Error(
       'This time slot has already been booked. Please choose another time.',
     )

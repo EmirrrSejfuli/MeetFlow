@@ -8,7 +8,9 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 
+import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 import { TimeSlot } from '../slots/entities/time-slot.entity';
+
 import { Booking } from './entities/booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
 
@@ -20,6 +22,8 @@ export class BookingsService {
 
     @InjectRepository(TimeSlot)
     private readonly slotsRepository: Repository<TimeSlot>,
+
+    private readonly googleCalendarService: GoogleCalendarService,
   ) {}
 
   async create(dto: CreateBookingDto): Promise<Booking> {
@@ -27,7 +31,9 @@ export class BookingsService {
     const guestEmail = dto.guestEmail.trim().toLowerCase();
 
     if (!guestName) {
-      throw new BadRequestException('Guest name is required');
+      throw new BadRequestException(
+        'Guest name is required',
+      );
     }
 
     const slot = await this.slotsRepository.findOneBy({
@@ -35,12 +41,26 @@ export class BookingsService {
     });
 
     if (!slot) {
-      throw new NotFoundException('Time slot not found');
+      throw new NotFoundException(
+        'Time slot not found',
+      );
     }
 
     if (slot.startsAt.getTime() <= Date.now()) {
       throw new BadRequestException(
         'Cannot book a past time slot',
+      );
+    }
+
+    // Verify availability in Google Calendar.
+    const isBusy = await this.googleCalendarService.isHostBusy(
+      slot.startsAt,
+      slot.durationMinutes,
+    );
+
+    if (isBusy) {
+      throw new ConflictException(
+        'The host is busy in Google Calendar at this time.',
       );
     }
 
