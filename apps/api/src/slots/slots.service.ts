@@ -1,10 +1,11 @@
 
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
 
 import { CreateSlotDto } from './dto/create-slot.dto';
 import { TimeSlot } from './entities/time-slot.entity';
@@ -19,9 +20,12 @@ export class SlotsService {
   async create(dto: CreateSlotDto): Promise<TimeSlot> {
     const startsAt = new Date(dto.startsAt);
 
-    if (startsAt.getTime() <= Date.now()) {
+    if (
+      Number.isNaN(startsAt.getTime()) ||
+      startsAt.getTime() <= Date.now()
+    ) {
       throw new BadRequestException(
-        'The start time must be in the future',
+        'The start time must be a valid future date',
       );
     }
 
@@ -30,7 +34,28 @@ export class SlotsService {
       durationMinutes: dto.durationMinutes,
     });
 
-    return this.slotsRepository.save(slot);
+    try {
+      return await this.slotsRepository.save(slot);
+    } catch (error: unknown) {
+      if (error instanceof QueryFailedError) {
+        const databaseError = error.driverError as {
+          code?: string;
+          constraint?: string;
+        };
+
+        if (
+          databaseError.code === '23P01' &&
+          databaseError.constraint ===
+            'EX_time_slots_no_overlap'
+        ) {
+          throw new ConflictException(
+            'The selected time overlaps with an existing slot.',
+          );
+        }
+      }
+
+      throw error;
+    }
   }
 
   async findAvailable(): Promise<TimeSlot[]> {

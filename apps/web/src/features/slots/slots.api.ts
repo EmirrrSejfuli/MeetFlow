@@ -22,7 +22,9 @@ export async function getAvailableSlots(
   })
 
   if (!response.ok) {
-    throw new Error('Failed to load available slots.')
+    throw new Error(
+      'Unable to load available slots. Please try again.',
+    )
   }
 
   return (await response.json()) as TimeSlot[]
@@ -39,9 +41,21 @@ export async function createSlot(
     body: JSON.stringify(input),
   })
 
+  if (response.status === 409) {
+    throw new Error(
+      'This time slot overlaps with an existing slot. Please choose another time.',
+    )
+  }
+
+  if (response.status === 400) {
+    throw new Error(
+      'Invalid date, time, or duration. Please check your details.',
+    )
+  }
+
   if (!response.ok) {
     throw new Error(
-      `Failed to create time slot (HTTP ${response.status}).`,
+      'Unable to create the time slot. Please try again.',
     )
   }
 
