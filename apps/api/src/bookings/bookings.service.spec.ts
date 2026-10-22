@@ -1,7 +1,7 @@
-
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { QueryFailedError, Repository } from 'typeorm';
@@ -9,67 +9,33 @@ import { QueryFailedError, Repository } from 'typeorm';
 import { GeminiService } from '../gemini/gemini.service';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 import { TimeSlot } from '../slots/entities/time-slot.entity';
-
 import { BookingsService } from './bookings.service';
 import { Booking } from './entities/booking.entity';
 
 describe('BookingsService', () => {
   const bookingsRepository = {
-    create: jest.fn(),
-    save: jest.fn(),
-    findOneBy: jest.fn(),
+    create: jest.fn(), save: jest.fn(), findOneBy: jest.fn(),
   };
-
-  const slotsRepository = {
-    findOneBy: jest.fn(),
-  };
-
-  const googleCalendarService = {
-    isHostBusy: jest.fn(),
-  };
-
-  const geminiService = {
-    generateBookingConfirmation: jest.fn(),
-  };
-
+  const slotsRepository = { findOneBy: jest.fn() };
+  const googleCalendarService = { isHostBusy: jest.fn() };
+  const geminiService = { generateBookingConfirmation: jest.fn() };
   let service: BookingsService;
 
   const slotId = '11111111-1111-4111-8111-111111111111';
   const bookingId = '22222222-2222-4222-8222-222222222222';
-
-  const aiConfirmation =
-    'Hello Test Guest, your meeting is confirmed.';
-
-  const createValidDto = () => ({
-    slotId,
-    guestName: '  Test Guest  ',
-    guestEmail: '  TEST@EXAMPLE.COM  ',
-  });
-
-  const createFutureSlot = (): TimeSlot =>
-    ({
-      id: slotId,
-      startsAt: new Date(Date.now() + 60 * 60 * 1000),
-      durationMinutes: 30,
-    }) as TimeSlot;
-
-  const createSavedBooking = (): Booking =>
-    ({
-      id: bookingId,
-      slotId,
-      guestName: 'Test Guest',
-      guestEmail: 'test@example.com',
-    }) as Booking;
+  const aiConfirmation = 'Hello Test Guest, your meeting is confirmed.';
+  const validDto = () => ({ slotId, guestName: '  Test Guest  ', guestEmail: '  TEST@EXAMPLE.COM  ' });
+  const futureSlot = (): TimeSlot => ({
+    id: slotId, startsAt: new Date(Date.now() + 3_600_000), durationMinutes: 30,
+  }) as TimeSlot;
+  const savedBooking = (): Booking => ({
+    id: bookingId, slotId, guestName: 'Test Guest', guestEmail: 'test@example.com',
+  }) as Booking;
 
   beforeEach(() => {
     jest.resetAllMocks();
-
     googleCalendarService.isHostBusy.mockResolvedValue(false);
-
-    geminiService.generateBookingConfirmation.mockResolvedValue(
-      aiConfirmation,
-    );
-
+    geminiService.generateBookingConfirmation.mockResolvedValue(aiConfirmation);
     service = new BookingsService(
       bookingsRepository as unknown as Repository<Booking>,
       slotsRepository as unknown as Repository<TimeSlot>,
@@ -78,303 +44,140 @@ describe('BookingsService', () => {
     );
   });
 
-  describe('create()', () => {
-    it('should save a booking without waiting for Gemini AI', async () => {
-      const dto = createValidDto();
-      const slot = createFutureSlot();
-      const booking = createSavedBooking();
+  function mockSuccessfulBooking() {
+    const slot = futureSlot();
+    const booking = savedBooking();
+    slotsRepository.findOneBy.mockResolvedValue(slot);
+    bookingsRepository.create.mockReturnValue(booking);
+    bookingsRepository.save.mockResolvedValue(booking);
+    bookingsRepository.findOneBy.mockResolvedValue(booking);
+    return { slot, booking };
+  }
 
-      slotsRepository.findOneBy.mockResolvedValue(slot);
-      bookingsRepository.create.mockReturnValue(booking);
-      bookingsRepository.save.mockResolvedValue(booking);
-
-      const result = await service.create(dto);
-
-      expect(slotsRepository.findOneBy).toHaveBeenCalledWith({
-        id: slotId,
-      });
-
-      expect(googleCalendarService.isHostBusy).toHaveBeenCalledWith(
-        slot.startsAt,
-        slot.durationMinutes,
-      );
-
-      expect(bookingsRepository.create).toHaveBeenCalledWith({
-        slotId,
-        guestName: 'Test Guest',
-        guestEmail: 'test@example.com',
-      });
-
-      expect(bookingsRepository.save).toHaveBeenCalledWith(
-        booking,
-      );
-
-      expect(result).toEqual({
-        ...booking,
-        confirmationMessage: expect.stringContaining(
-          'Test Guest',
-        ) as string,
-        confirmationSource: 'fallback',
-      });
-
-      expect(result.confirmationMessage).toContain(
-        '30 minutes',
-      );
-
-      expect(
-        geminiService.generateBookingConfirmation,
-      ).not.toHaveBeenCalled();
+  it('creates a booking immediately without waiting for Gemini', async () => {
+    const { slot, booking } = mockSuccessfulBooking();
+    const result = await service.create(validDto());
+    expect(slotsRepository.findOneBy).toHaveBeenCalledWith({ id: slotId });
+    expect(googleCalendarService.isHostBusy).toHaveBeenCalledWith(slot.startsAt, 30);
+    expect(bookingsRepository.create).toHaveBeenCalledWith({
+      slotId, guestName: 'Test Guest', guestEmail: 'test@example.com',
     });
-
-    it('should reject an empty guest name', async () => {
-      const dto = {
-        ...createValidDto(),
-        guestName: '   ',
-      };
-
-      await expect(
-        service.create(dto),
-      ).rejects.toBeInstanceOf(BadRequestException);
-
-      expect(slotsRepository.findOneBy).not.toHaveBeenCalled();
-      expect(googleCalendarService.isHostBusy).not.toHaveBeenCalled();
-      expect(bookingsRepository.save).not.toHaveBeenCalled();
-    });
-
-    it('should reject a booking when the slot does not exist', async () => {
-      slotsRepository.findOneBy.mockResolvedValue(null);
-
-      await expect(
-        service.create(createValidDto()),
-      ).rejects.toBeInstanceOf(NotFoundException);
-
-      expect(googleCalendarService.isHostBusy).not.toHaveBeenCalled();
-      expect(bookingsRepository.save).not.toHaveBeenCalled();
-    });
-
-    it('should reject a booking for a past slot', async () => {
-      const slot = createFutureSlot();
-
-      slot.startsAt = new Date(
-        Date.now() - 60 * 60 * 1000,
-      );
-
-      slotsRepository.findOneBy.mockResolvedValue(slot);
-
-      await expect(
-        service.create(createValidDto()),
-      ).rejects.toBeInstanceOf(BadRequestException);
-
-      expect(googleCalendarService.isHostBusy).not.toHaveBeenCalled();
-      expect(bookingsRepository.save).not.toHaveBeenCalled();
-    });
-
-    it('should return 409 when the slot is already booked', async () => {
-      slotsRepository.findOneBy.mockResolvedValue(
-        createFutureSlot(),
-      );
-
-      bookingsRepository.create.mockReturnValue(
-        {} as Booking,
-      );
-
-      const databaseError = Object.assign(
-        new Error('Duplicate booking'),
-        {
-          code: '23505',
-          constraint: 'UQ_bookings_slot_id',
-        },
-      );
-
-      bookingsRepository.save.mockRejectedValue(
-        new QueryFailedError(
-          'INSERT INTO bookings ...',
-          [],
-          databaseError,
-        ),
-      );
-
-      await expect(
-        service.create(createValidDto()),
-      ).rejects.toBeInstanceOf(ConflictException);
-
-      expect(googleCalendarService.isHostBusy).toHaveBeenCalled();
-
-      expect(
-        geminiService.generateBookingConfirmation,
-      ).not.toHaveBeenCalled();
-    });
-
-    it('should not hide unexpected database errors', async () => {
-      slotsRepository.findOneBy.mockResolvedValue(
-        createFutureSlot(),
-      );
-
-      bookingsRepository.create.mockReturnValue(
-        {} as Booking,
-      );
-
-      const databaseError = new Error(
-        'Unexpected database failure',
-      );
-
-      bookingsRepository.save.mockRejectedValue(
-        databaseError,
-      );
-
-      await expect(
-        service.create(createValidDto()),
-      ).rejects.toBe(databaseError);
-    });
-
-    it('should reject booking when Google Calendar is busy', async () => {
-      const slot = createFutureSlot();
-
-      slotsRepository.findOneBy.mockResolvedValue(slot);
-      googleCalendarService.isHostBusy.mockResolvedValue(true);
-
-      await expect(
-        service.create(createValidDto()),
-      ).rejects.toBeInstanceOf(ConflictException);
-
-      expect(googleCalendarService.isHostBusy).toHaveBeenCalledWith(
-        slot.startsAt,
-        slot.durationMinutes,
-      );
-
-      expect(bookingsRepository.create).not.toHaveBeenCalled();
-      expect(bookingsRepository.save).not.toHaveBeenCalled();
-    });
-
-    it('should reject booking when Google Calendar is unavailable', async () => {
-      const slot = createFutureSlot();
-
-      slotsRepository.findOneBy.mockResolvedValue(slot);
-
-      const calendarError = new Error(
-        'Google Calendar unavailable',
-      );
-
-      googleCalendarService.isHostBusy.mockRejectedValue(
-        calendarError,
-      );
-
-      await expect(
-        service.create(createValidDto()),
-      ).rejects.toBe(calendarError);
-
-      expect(bookingsRepository.save).not.toHaveBeenCalled();
-    });
+    expect(bookingsRepository.save).toHaveBeenCalledWith(booking);
+    expect(result.confirmationSource).toBe('fallback');
+    expect(result.confirmationMessage).toContain('Test Guest');
+    expect(result.confirmationMessage).toContain('30 minutes');
+    expect(result.confirmationToken).toMatch(/^\d{13}\.[a-f0-9]{64}$/);
+    expect(geminiService.generateBookingConfirmation).not.toHaveBeenCalled();
   });
 
-  describe('generateConfirmation()', () => {
-    it('should generate a personalized confirmation with Gemini', async () => {
-      const booking = createSavedBooking();
-      const slot = createFutureSlot();
+  it('rejects an empty guest name', async () => {
+    await expect(service.create({ ...validDto(), guestName: '   ' }))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(slotsRepository.findOneBy).not.toHaveBeenCalled();
+  });
 
-      bookingsRepository.findOneBy.mockResolvedValue(
-        booking,
-      );
+  it('rejects a nonexistent slot', async () => {
+    slotsRepository.findOneBy.mockResolvedValue(null);
+    await expect(service.create(validDto())).rejects.toBeInstanceOf(NotFoundException);
+    expect(bookingsRepository.save).not.toHaveBeenCalled();
+  });
 
-      slotsRepository.findOneBy.mockResolvedValue(slot);
+  it('rejects a past slot', async () => {
+    const slot = futureSlot();
+    slot.startsAt = new Date(Date.now() - 3_600_000);
+    slotsRepository.findOneBy.mockResolvedValue(slot);
+    await expect(service.create(validDto())).rejects.toBeInstanceOf(BadRequestException);
+    expect(bookingsRepository.save).not.toHaveBeenCalled();
+  });
 
-      const result = await service.generateConfirmation(
-        bookingId,
-      );
-
-      expect(bookingsRepository.findOneBy).toHaveBeenCalledWith({
-        id: bookingId,
-      });
-
-      expect(slotsRepository.findOneBy).toHaveBeenCalledWith({
-        id: slotId,
-      });
-
-      expect(
-        geminiService.generateBookingConfirmation,
-      ).toHaveBeenCalledWith({
-        guestName: 'Test Guest',
-        startsAt: slot.startsAt,
-        durationMinutes: 30,
-      });
-
-      expect(result).toEqual({
-        confirmationMessage: aiConfirmation,
-        confirmationSource: 'gemini',
-      });
-
-      expect(bookingsRepository.save).not.toHaveBeenCalled();
+  it('returns 409 for a duplicate booking', async () => {
+    slotsRepository.findOneBy.mockResolvedValue(futureSlot());
+    bookingsRepository.create.mockReturnValue({} as Booking);
+    const error = Object.assign(new Error('Duplicate booking'), {
+      code: '23505', constraint: 'UQ_bookings_slot_id',
     });
+    bookingsRepository.save.mockRejectedValue(new QueryFailedError('INSERT', [], error));
+    await expect(service.create(validDto())).rejects.toBeInstanceOf(ConflictException);
+    expect(geminiService.generateBookingConfirmation).not.toHaveBeenCalled();
+  });
 
-    it('should return a fallback if Gemini fails', async () => {
-      const booking = createSavedBooking();
-      const slot = createFutureSlot();
+  it('does not hide unexpected database errors', async () => {
+    slotsRepository.findOneBy.mockResolvedValue(futureSlot());
+    bookingsRepository.create.mockReturnValue({} as Booking);
+    const error = new Error('Unexpected database failure');
+    bookingsRepository.save.mockRejectedValue(error);
+    await expect(service.create(validDto())).rejects.toBe(error);
+  });
 
-      bookingsRepository.findOneBy.mockResolvedValue(
-        booking,
-      );
+  it('rejects a Google Calendar conflict', async () => {
+    slotsRepository.findOneBy.mockResolvedValue(futureSlot());
+    googleCalendarService.isHostBusy.mockResolvedValue(true);
+    await expect(service.create(validDto())).rejects.toBeInstanceOf(ConflictException);
+    expect(bookingsRepository.save).not.toHaveBeenCalled();
+  });
 
-      slotsRepository.findOneBy.mockResolvedValue(slot);
+  it('fails closed when a connected Google Calendar is unavailable', async () => {
+    slotsRepository.findOneBy.mockResolvedValue(futureSlot());
+    const error = new Error('Google Calendar unavailable');
+    googleCalendarService.isHostBusy.mockRejectedValue(error);
+    await expect(service.create(validDto())).rejects.toBe(error);
+    expect(bookingsRepository.save).not.toHaveBeenCalled();
+  });
 
-      geminiService.generateBookingConfirmation.mockRejectedValue(
-        new Error('Gemini unavailable'),
-      );
-
-      const result = await service.generateConfirmation(
-        bookingId,
-      );
-
-      expect(result.confirmationSource).toBe(
-        'fallback',
-      );
-
-      expect(result.confirmationMessage).toContain(
-        'Test Guest',
-      );
-
-      expect(result.confirmationMessage).toContain(
-        '30 minutes',
-      );
-
-      expect(result.confirmationMessage).toContain(
-        'Europe/Skopje',
-      );
-
-      expect(bookingsRepository.save).not.toHaveBeenCalled();
+  it('generates a personalized confirmation with a valid token', async () => {
+    const { slot } = mockSuccessfulBooking();
+    const { confirmationToken } = await service.create(validDto());
+    const result = await service.generateConfirmation(bookingId, confirmationToken);
+    expect(bookingsRepository.findOneBy).toHaveBeenCalledWith({ id: bookingId });
+    expect(geminiService.generateBookingConfirmation).toHaveBeenCalledWith({
+      guestName: 'Test Guest', startsAt: slot.startsAt, durationMinutes: 30,
     });
+    expect(result).toEqual({ confirmationMessage: aiConfirmation, confirmationSource: 'gemini' });
+    expect(bookingsRepository.save).toHaveBeenCalledTimes(1);
+  });
 
-    it('should reject confirmation for a nonexistent booking', async () => {
-      bookingsRepository.findOneBy.mockResolvedValue(
-        null,
-      );
+  it('uses the fallback when Gemini fails', async () => {
+    mockSuccessfulBooking();
+    const { confirmationToken } = await service.create(validDto());
+    geminiService.generateBookingConfirmation.mockRejectedValue(new Error('Gemini error'));
+    const result = await service.generateConfirmation(bookingId, confirmationToken);
+    expect(result.confirmationSource).toBe('fallback');
+    expect(result.confirmationMessage).toContain('Europe/Skopje');
+    expect(result.confirmationMessage).toContain('30 minutes');
+  });
 
-      await expect(
-        service.generateConfirmation(bookingId),
-      ).rejects.toBeInstanceOf(NotFoundException);
+  it('rejects a confirmation without a matching token', async () => {
+    mockSuccessfulBooking();
+    const { confirmationToken } = await service.create(validDto());
+    await expect(service.generateConfirmation(bookingId, 'fake-token'))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.generateConfirmation(slotId, confirmationToken))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(geminiService.generateBookingConfirmation).not.toHaveBeenCalled();
+  });
 
-      expect(slotsRepository.findOneBy).not.toHaveBeenCalled();
+  it('only calls Gemini once for repeated requests to the same booking', async () => {
+    mockSuccessfulBooking();
+    const { confirmationToken } = await service.create(validDto());
+    const first = await service.generateConfirmation(bookingId, confirmationToken);
+    const second = await service.generateConfirmation(bookingId, confirmationToken);
+    expect(second).toEqual(first);
+    expect(geminiService.generateBookingConfirmation).toHaveBeenCalledTimes(1);
+  });
 
-      expect(
-        geminiService.generateBookingConfirmation,
-      ).not.toHaveBeenCalled();
-    });
+  it('rejects a confirmation for a nonexistent booking', async () => {
+    mockSuccessfulBooking();
+    const { confirmationToken } = await service.create(validDto());
+    bookingsRepository.findOneBy.mockResolvedValue(null);
+    await expect(service.generateConfirmation(bookingId, confirmationToken))
+      .rejects.toBeInstanceOf(NotFoundException);
+  });
 
-    it('should reject confirmation if the related slot is missing', async () => {
-      bookingsRepository.findOneBy.mockResolvedValue(
-        createSavedBooking(),
-      );
-
-      slotsRepository.findOneBy.mockResolvedValue(
-        null,
-      );
-
-      await expect(
-        service.generateConfirmation(bookingId),
-      ).rejects.toBeInstanceOf(NotFoundException);
-
-      expect(
-        geminiService.generateBookingConfirmation,
-      ).not.toHaveBeenCalled();
-    });
+  it('rejects a confirmation if the slot is missing', async () => {
+    mockSuccessfulBooking();
+    const { confirmationToken } = await service.create(validDto());
+    slotsRepository.findOneBy.mockResolvedValue(null);
+    await expect(service.generateConfirmation(bookingId, confirmationToken))
+      .rejects.toBeInstanceOf(NotFoundException);
   });
 });

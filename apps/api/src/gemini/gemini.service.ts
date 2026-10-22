@@ -1,4 +1,3 @@
-
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenAI } from '@google/genai';
@@ -37,7 +36,7 @@ export class GeminiService {
     const response = await this.client.models.generateContent({
       model:
         this.configService.get<string>('GEMINI_MODEL') ||
-        'gemini-3.8-flash',
+        'gemini-3.5-flash-lite',
       contents: `
 Generate a professional, friendly booking confirmation
 for the MeetFlow scheduling application.

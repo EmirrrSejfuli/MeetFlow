@@ -89,7 +89,7 @@ export function AvailableSlots() {
     // Begin AI personalization separately.
     setGeneratingForId(booking.id)
 
-    void generateBookingConfirmation(booking.id)
+    void generateBookingConfirmation(booking.id, booking.confirmationToken)
       .then((confirmation) => {
         // Update only the booking currently displayed.
         setConfirmedBooking((current) => {
@@ -239,6 +239,7 @@ export function AvailableSlots() {
 
             const isSelected =
               selectedSlotId === slot.id
+            const isAvailable = slot.available
 
             return (
               <article
@@ -247,7 +248,7 @@ export function AvailableSlots() {
               >
                 <div className="mb-4 flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold uppercase tracking-wide text-indigo-600">
-                    Available
+                    {isAvailable ? 'Available' : 'Unavailable'}
                   </span>
 
                   <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
@@ -269,7 +270,15 @@ export function AvailableSlots() {
                   {timeFormatter.format(end)}
                 </p>
 
-                {!isSelected && (
+                {!isAvailable && (
+                  <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                    {slot.unavailableReason === 'calendar-unavailable'
+                      ? 'Calendar availability cannot be verified right now.'
+                      : 'The host is busy in Google Calendar at this time.'}
+                  </p>
+                )}
+
+                {!isSelected && isAvailable && (
                   <button
                     type="button"
                     onClick={() =>
@@ -282,7 +291,7 @@ export function AvailableSlots() {
                   </button>
                 )}
 
-                {isSelected && (
+                {isSelected && isAvailable && (
                   <BookingForm
                     slotId={slot.id}
                     onBooked={handleBookingSuccess}

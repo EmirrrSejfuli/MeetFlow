@@ -1,47 +1,38 @@
-
-import {
-  Injectable,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { google } from 'googleapis';
 
-const CALENDAR_SCOPE =
-  'https://www.googleapis.com/auth/calendar.events.freebusy';
+const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events.freebusy';
+
+export interface BusyPeriod {
+  start: Date;
+  end: Date;
+}
 
 @Injectable()
 export class GoogleCalendarService {
-  constructor(
-    private readonly configService: ConfigService,
-  ) {}
+  constructor(private readonly configService: ConfigService) {}
 
   private createOAuthClient() {
-    const clientId =
-      this.configService.get<string>('GOOGLE_CLIENT_ID');
-
-    const clientSecret =
-      this.configService.get<string>('GOOGLE_CLIENT_SECRET');
-
-    const redirectUri =
-      this.configService.get<string>('GOOGLE_REDIRECT_URI');
+    const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
+    const clientSecret = this.configService.get<string>('GOOGLE_CLIENT_SECRET');
+    const redirectUri = this.configService.get<string>('GOOGLE_REDIRECT_URI');
 
     if (!clientId || !clientSecret || !redirectUri) {
-      throw new Error(
-        'Google OAuth credentials are not configured',
-      );
+      throw new ServiceUnavailableException('Google OAuth credentials are not configured.');
     }
 
-    return new google.auth.OAuth2(
-      clientId,
-      clientSecret,
-      redirectUri,
-    );
+    return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+  }
+
+  // No refresh token means Calendar integration was not configured.
+  // When configured, an API failure must NOT be treated as free time.
+  isConnected(): boolean {
+    return Boolean(this.configService.get<string>('GOOGLE_REFRESH_TOKEN')?.trim());
   }
 
   generateAuthorizationUrl(state: string): string {
-    const oauthClient = this.createOAuthClient();
-
-    return oauthClient.generateAuthUrl({
+    return this.createOAuthClient().generateAuthUrl({
       access_type: 'offline',
       prompt: 'consent',
       scope: [CALENDAR_SCOPE],
@@ -50,74 +41,51 @@ export class GoogleCalendarService {
   }
 
   async exchangeCode(code: string) {
-    const oauthClient = this.createOAuthClient();
-
-    const { tokens } = await oauthClient.getToken(code);
-
+    const { tokens } = await this.createOAuthClient().getToken(code);
     return tokens;
   }
 
-  // Check the host's calendar using the stored refresh token.
-  async isHostBusy(
-    startsAt: Date,
-    durationMinutes: number,
-  ): Promise<boolean> {
-    const refreshToken =
-      this.configService.get<string>('GOOGLE_REFRESH_TOKEN');
+  // One FreeBusy request covers the entire list of future slots.
+  async getBusyPeriods(start: Date, end: Date): Promise<BusyPeriod[]> {
+    const refreshToken = this.configService.get<string>('GOOGLE_REFRESH_TOKEN')?.trim();
+    if (!refreshToken) return [];
 
-    if (!refreshToken) {
-      throw new ServiceUnavailableException(
-        'Google Calendar is not connected.',
-      );
+    try {
+      const oauthClient = this.createOAuthClient();
+      oauthClient.setCredentials({ refresh_token: refreshToken });
+      const calendar = google.calendar({ version: 'v3', auth: oauthClient });
+      const result = await calendar.freebusy.query({
+        requestBody: {
+          timeMin: start.toISOString(),
+          timeMax: end.toISOString(),
+          items: [{ id: 'primary' }],
+        },
+      });
+
+      const primary = result.data.calendars?.primary;
+      if (!primary || primary.errors?.length) {
+        throw new Error('Google Calendar returned no valid availability.');
+      }
+
+      return (primary.busy ?? []).map((period) => {
+        if (!period.start || !period.end) {
+          throw new Error('Incomplete calendar busy period.');
+        }
+        const interval = { start: new Date(period.start), end: new Date(period.end) };
+        if (Number.isNaN(interval.start.getTime()) || Number.isNaN(interval.end.getTime())) {
+          throw new Error('Invalid calendar busy period.');
+        }
+        return interval;
+      });
+    } catch {
+      throw new ServiceUnavailableException('Google Calendar availability could not be verified.');
     }
-
-    return this.isBusy(
-      refreshToken,
-      startsAt,
-      durationMinutes,
-    );
   }
 
-  // Query Google Calendar FreeBusy API.
-  async isBusy(
-    refreshToken: string,
-    startsAt: Date,
-    durationMinutes: number,
-  ): Promise<boolean> {
-    const oauthClient = this.createOAuthClient();
-
-    oauthClient.setCredentials({
-      refresh_token: refreshToken,
-    });
-
-    const calendar = google.calendar({
-      version: 'v3',
-      auth: oauthClient,
-    });
-
-    const endsAt = new Date(
-      startsAt.getTime() + durationMinutes * 60_000,
-    );
-
-    const response = await calendar.freebusy.query({
-      requestBody: {
-        timeMin: startsAt.toISOString(),
-        timeMax: endsAt.toISOString(),
-        items: [{ id: 'primary' }],
-      },
-    });
-
-    const primaryCalendar = response.data.calendars?.primary;
-
-    if (
-      !primaryCalendar ||
-      primaryCalendar.errors?.length
-    ) {
-      throw new ServiceUnavailableException(
-        'Google Calendar availability could not be verified',
-      );
-    }
-
-    return (primaryCalendar.busy?.length ?? 0) > 0;
+  async isHostBusy(startsAt: Date, durationMinutes: number): Promise<boolean> {
+    if (!this.isConnected()) return false;
+    const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
+    const periods = await this.getBusyPeriods(startsAt, endsAt);
+    return periods.some(({ start, end }) => start < endsAt && end > startsAt);
   }
 }

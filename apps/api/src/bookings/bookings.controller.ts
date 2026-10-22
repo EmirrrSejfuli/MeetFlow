@@ -1,12 +1,4 @@
-
-import {
-  Body,
-  Controller,
-  Param,
-  ParseUUIDPipe,
-  Post,
-} from '@nestjs/common';
-
+import { Body, Controller, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import {
   BookingsService,
   type BookingConfirmation,
@@ -16,26 +8,18 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 
 @Controller('bookings')
 export class BookingsController {
-  constructor(
-    private readonly bookingsService: BookingsService,
-  ) {}
+  constructor(private readonly bookingsService: BookingsService) {}
 
-  // Save the booking without waiting for Gemini AI.
   @Post()
-  create(
-    @Body() dto: CreateBookingDto,
-  ): Promise<BookingWithConfirmation> {
+  create(@Body() dto: CreateBookingDto): Promise<BookingWithConfirmation> {
     return this.bookingsService.create(dto);
   }
 
-  // Generate a personalized confirmation separately.
   @Post(':bookingId/confirmation')
   generateConfirmation(
-    @Param('bookingId', new ParseUUIDPipe())
-    bookingId: string,
+    @Param('bookingId', new ParseUUIDPipe()) bookingId: string,
+    @Body('token') token: string,
   ): Promise<BookingConfirmation> {
-    return this.bookingsService.generateConfirmation(
-      bookingId,
-    );
+    return this.bookingsService.generateConfirmation(bookingId, token);
   }
 }

@@ -4,6 +4,8 @@ export interface TimeSlot {
   startsAt: string
   durationMinutes: number
   createdAt: string
+  available: boolean
+  unavailableReason?: 'google-calendar' | 'calendar-unavailable'
 }
 
 export interface CreateSlotInput {
