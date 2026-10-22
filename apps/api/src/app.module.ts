@@ -6,6 +6,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { SlotsModule } from './slots/slots.module';
 import { BookingsModule } from './bookings/bookings.module';
 
+import { CreateTimeSlots1792400000000 } from './database/migrations/1792400000000-CreateTimeSlots';
+import { CreateBookings1792490000000 } from './database/migrations/1792490000000-CreateBookings';
+import { PreventOverlappingSlots1792570000000 } from './database/migrations/1792570000000-PreventOverlappingSlots';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -15,23 +19,46 @@ import { BookingsModule } from './bookings/bookings.module';
 
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        type: 'postgres',
-        host: '127.0.0.1',
-        port: 5433,
+      useFactory: (configService: ConfigService) => {
+        const databaseUrl =
+          configService.get<string>('DATABASE_URL');
 
-        username:
-          configService.getOrThrow<string>('POSTGRES_USER'),
+        return {
+          type: 'postgres' as const,
 
-        password:
-          configService.getOrThrow<string>('POSTGRES_PASSWORD'),
+          ...(databaseUrl
+            ? {
+                url: databaseUrl,
+              }
+            : {
+                host: '127.0.0.1',
+                port: 5433,
+                username:
+                  configService.getOrThrow<string>(
+                    'POSTGRES_USER',
+                  ),
+                password:
+                  configService.getOrThrow<string>(
+                    'POSTGRES_PASSWORD',
+                  ),
+                database:
+                  configService.getOrThrow<string>(
+                    'POSTGRES_DB',
+                  ),
+              }),
 
-        database:
-          configService.getOrThrow<string>('POSTGRES_DB'),
+          autoLoadEntities: true,
+          synchronize: false,
 
-        autoLoadEntities: true,
-        synchronize: false,
-      }),
+          migrations: [
+            CreateTimeSlots1792400000000,
+            CreateBookings1792490000000,
+            PreventOverlappingSlots1792570000000,
+          ],
+
+          migrationsRun: Boolean(databaseUrl),
+        };
+      },
     }),
 
     SlotsModule,
