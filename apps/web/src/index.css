@@ -1,8 +1,7 @@
-
 @import "tailwindcss";
 
 :root {
-  font-family: Inter, system-ui, sans-serif;
+  font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -11,4 +10,44 @@
 body {
   margin: 0;
   min-width: 320px;
+  background: #f7f8fc;
+}
+
+.app-background {
+  background:
+    radial-gradient(circle at 8% 32%, rgba(224, 231, 255, 0.48), transparent 27rem),
+    radial-gradient(circle at 90% 77%, rgba(237, 233, 254, 0.5), transparent 31rem),
+    #f7f8fc;
+}
+
+.hero-surface {
+  background: linear-gradient(115deg, #151a49 0%, #30287e 56%, #4e45bd 100%);
+}
+
+.hero-orb {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 9999px;
+}
+
+.hero-orb-one {
+  width: 350px;
+  height: 350px;
+  right: -130px;
+  top: -170px;
+  background: radial-gradient(circle, rgba(175, 157, 255, 0.38), transparent 68%);
+}
+
+.hero-orb-two {
+  width: 280px;
+  height: 280px;
+  left: 35%;
+  bottom: -220px;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.55), transparent 68%);
+}
+
+input,
+select,
+button {
+  font: inherit;
 }
